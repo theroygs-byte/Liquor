@@ -1,20 +1,15 @@
 """
 Main entry point for the Roy G's Spirits Price Tracker.
-
-Usage:
-    python main.py --file path/to/spreadsheet.xlsx [--output path/to/output.xlsx]
-
-The script:
-1. Reads the Excel file to extract which products go to which vendor
-2. Scrapes current prices from Provi (provi.com) and Twin B2B (twinb2b.com)
-3. Updates the Excel file with new prices and on-hand quantities
-4. Saves the updated file (overwrites original unless --output is specified)
 """
 
 import argparse
 import logging
 import sys
+import os
 from openpyxl import load_workbook
+
+# Add scraper folder to path so imports work regardless of where script is run from
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "scraper"))
 
 from scraper import scrape_provi, scrape_twin
 from excel_updater import update_excel, DATA_START_ROW, MASTER_SHEET
@@ -32,9 +27,6 @@ log = logging.getLogger(__name__)
 
 
 def extract_products_by_vendor(filepath):
-    """
-    Read the Master Order Guide and split items into provi_products / twin_products lists.
-    """
     wb = load_workbook(filepath, read_only=True)
     ws = wb[MASTER_SHEET]
 
@@ -50,17 +42,15 @@ def extract_products_by_vendor(filepath):
     }
 
     for row in ws.iter_rows(min_row=DATA_START_ROW, values_only=True):
-        # Left block
         left_name   = row[LEFT_ITEM_COL - 1]
         left_vendor = str(row[LEFT_VENDOR_COL - 1] or "").strip().lower()
         if left_name and str(left_name).strip().lower() not in skip_values:
             name = str(left_name).strip()
             if "twin" in left_vendor:
                 twin_products.append(name)
-            elif left_vendor:  # specs / provi / southern etc
+            elif left_vendor:
                 provi_products.append(name)
 
-        # Right block
         right_name   = row[RIGHT_ITEM_COL - 1]
         right_vendor = str(row[RIGHT_VENDOR_COL - 1] or "").strip().lower()
         if right_name and str(right_name).strip().lower() not in skip_values:
@@ -70,7 +60,6 @@ def extract_products_by_vendor(filepath):
             elif right_vendor:
                 provi_products.append(name)
 
-    # Deduplicate while preserving order
     provi_products = list(dict.fromkeys(provi_products))
     twin_products  = list(dict.fromkeys(twin_products))
 
@@ -90,17 +79,14 @@ def main():
     log.info("Roy G's Spirits Price Tracker — Starting")
     log.info("=" * 60)
 
-    # Step 1: Read product lists from the spreadsheet
     provi_products, twin_products = extract_products_by_vendor(args.file)
 
-    # Step 2: Scrape prices
     log.info("Scraping Provi prices...")
     provi_prices = scrape_provi(provi_products)
 
     log.info("Scraping Twin B2B prices...")
     twin_prices = scrape_twin(twin_products)
 
-    # Step 3: Update Excel
     log.info("Updating Excel spreadsheet...")
     stats = update_excel(
         filepath=args.file,
