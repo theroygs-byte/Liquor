@@ -1,6 +1,6 @@
 """
 Spirits Price Scraper
-Scrapes current prices from Provi and Twin B2B, then updates the Excel spreadsheet.
+Scrapes prices from BOTH Provi and Twin B2B for every product.
 """
 
 import os
@@ -13,7 +13,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.common.exceptions import TimeoutException
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -40,7 +40,6 @@ def make_driver():
 
 
 def try_find(driver, selectors, by=By.CSS_SELECTOR, timeout=10):
-    """Try multiple selectors, return first match."""
     for sel in selectors:
         try:
             el = WebDriverWait(driver, timeout).until(
@@ -53,13 +52,11 @@ def try_find(driver, selectors, by=By.CSS_SELECTOR, timeout=10):
 
 
 def parse_price(text):
-    """Extract first dollar amount from a string."""
     if not text:
         return None
     match = re.search(r"\$?([\d,]+\.?\d*)", text.replace(",", ""))
     if match:
         val = float(match.group(1))
-        # Sanity check — spirits prices should be between $1 and $5000
         if 1 < val < 5000:
             return val
     return None
@@ -70,28 +67,16 @@ def parse_price(text):
 # ---------------------------------------------------------------------------
 
 def provi_login(driver):
-    log.info("Navigating to Provi login...")
+    log.info("Logging into Provi...")
     driver.get("https://www.provi.com/login")
     time.sleep(3)
-    log.info(f"Page title: {driver.title}")
-    log.info(f"Page URL: {driver.current_url}")
 
-    # Try many possible selectors for email field
-    email_selectors = [
-        "input[type='email']",
-        "input[name='email']",
-        "input[id='email']",
-        "input[placeholder*='email' i]",
-        "input[placeholder*='Email' i]",
-        "input[autocomplete='email']",
-        "input[autocomplete='username']",
-        "input[type='text']",
-    ]
-    email_field = try_find(driver, email_selectors)
-
+    email_field = try_find(driver, [
+        "input[type='email']", "input[name='email']", "input[id='email']",
+        "input[placeholder*='email' i]", "input[autocomplete='email']",
+        "input[autocomplete='username']", "input[type='text']",
+    ])
     if not email_field:
-        # Log page source snippet for debugging
-        log.error("Could not find email field. Page source snippet:")
         log.error(driver.page_source[:2000])
         raise Exception("Provi: email field not found")
 
@@ -99,14 +84,10 @@ def provi_login(driver):
     email_field.send_keys(PROVI_EMAIL)
     time.sleep(0.5)
 
-    # Password field
-    pass_selectors = [
-        "input[type='password']",
-        "input[name='password']",
-        "input[id='password']",
-        "input[placeholder*='password' i]",
-    ]
-    pass_field = try_find(driver, pass_selectors)
+    pass_field = try_find(driver, [
+        "input[type='password']", "input[name='password']",
+        "input[id='password']", "input[placeholder*='password' i]",
+    ])
     if not pass_field:
         raise Exception("Provi: password field not found")
 
@@ -114,56 +95,38 @@ def provi_login(driver):
     pass_field.send_keys(PROVI_PASSWORD)
     time.sleep(0.5)
 
-    # Submit
-    submit_selectors = [
-        "button[type='submit']",
-        "input[type='submit']",
-        "button[class*='login' i]",
-        "button[class*='sign' i]",
-    ]
-    submit_btn = try_find(driver, submit_selectors, timeout=5)
+    submit_btn = try_find(driver, [
+        "button[type='submit']", "input[type='submit']",
+        "button[class*='login' i]", "button[class*='sign' i]",
+    ], timeout=5)
     if submit_btn:
         submit_btn.click()
     else:
         pass_field.send_keys(Keys.RETURN)
 
     time.sleep(5)
-    log.info(f"After login URL: {driver.current_url}")
-    log.info("Provi login submitted.")
+    log.info(f"Provi login done. URL: {driver.current_url}")
 
 
-def provi_search_price(driver, product_name):
-    """Search for a product on Provi and return the price."""
+def provi_get_price(driver, product_name):
     try:
-        # Try navigating to shop/search page
         driver.get(f"https://www.provi.com/shop?q={product_name.replace(' ', '+')}")
         time.sleep(3)
-
-        # Try to find price elements
-        price_selectors = [
-            "[data-testid='product-price']",
-            "[class*='price' i]",
-            "[class*='Price']",
-            ".product-price",
-            "[data-price]",
-            "span[class*='cost' i]",
-        ]
-        for sel in price_selectors:
+        for sel in ["[data-testid='product-price']", "[class*='price' i]",
+                    "[class*='Price']", ".product-price", "[data-price]"]:
             try:
                 els = driver.find_elements(By.CSS_SELECTOR, sel)
-                for el in els[:3]:  # Check first 3 matches
+                for el in els[:3]:
                     price = parse_price(el.text)
                     if price:
                         log.info(f"Provi: '{product_name}' -> ${price}")
                         return price
             except Exception:
                 continue
-
-        log.warning(f"Provi: no price found for '{product_name}'")
+        log.warning(f"Provi: no price for '{product_name}'")
         return None
-
     except Exception as e:
-        log.error(f"Provi error for '{product_name}': {e}")
+        log.error(f"Provi search error '{product_name}': {e}")
         return None
 
 
@@ -173,7 +136,7 @@ def scrape_provi(products):
     try:
         provi_login(driver)
         for name in products:
-            results[name] = provi_search_price(driver, name)
+            results[name] = provi_get_price(driver, name)
             time.sleep(1.5)
     except Exception as e:
         log.error(f"Provi scraping failed: {e}")
@@ -187,24 +150,16 @@ def scrape_provi(products):
 # ---------------------------------------------------------------------------
 
 def twin_login(driver):
-    log.info("Navigating to Twin B2B login...")
+    log.info("Logging into Twin B2B...")
     driver.get("https://www.twinb2b.com/login")
     time.sleep(3)
-    log.info(f"Page title: {driver.title}")
-    log.info(f"Page URL: {driver.current_url}")
 
-    email_selectors = [
-        "input[type='email']",
-        "input[name='email']",
-        "input[id='email']",
-        "input[placeholder*='email' i]",
-        "input[autocomplete='email']",
-        "input[autocomplete='username']",
-        "input[type='text']",
-    ]
-    email_field = try_find(driver, email_selectors)
+    email_field = try_find(driver, [
+        "input[type='email']", "input[name='email']", "input[id='email']",
+        "input[placeholder*='email' i]", "input[autocomplete='email']",
+        "input[autocomplete='username']", "input[type='text']",
+    ])
     if not email_field:
-        log.error("Could not find Twin email field. Page source snippet:")
         log.error(driver.page_source[:2000])
         raise Exception("Twin B2B: email field not found")
 
@@ -212,13 +167,10 @@ def twin_login(driver):
     email_field.send_keys(TWIN_EMAIL)
     time.sleep(0.5)
 
-    pass_selectors = [
-        "input[type='password']",
-        "input[name='password']",
-        "input[id='password']",
-        "input[placeholder*='password' i]",
-    ]
-    pass_field = try_find(driver, pass_selectors)
+    pass_field = try_find(driver, [
+        "input[type='password']", "input[name='password']",
+        "input[id='password']", "input[placeholder*='password' i]",
+    ])
     if not pass_field:
         raise Exception("Twin B2B: password field not found")
 
@@ -226,37 +178,25 @@ def twin_login(driver):
     pass_field.send_keys(TWIN_PASSWORD)
     time.sleep(0.5)
 
-    submit_selectors = [
-        "button[type='submit']",
-        "input[type='submit']",
-        "button[class*='login' i]",
-        "button[class*='sign' i]",
-    ]
-    submit_btn = try_find(driver, submit_selectors, timeout=5)
+    submit_btn = try_find(driver, [
+        "button[type='submit']", "input[type='submit']",
+        "button[class*='login' i]", "button[class*='sign' i]",
+    ], timeout=5)
     if submit_btn:
         submit_btn.click()
     else:
         pass_field.send_keys(Keys.RETURN)
 
     time.sleep(5)
-    log.info(f"After login URL: {driver.current_url}")
-    log.info("Twin B2B login submitted.")
+    log.info(f"Twin login done. URL: {driver.current_url}")
 
 
-def twin_search_price(driver, product_name):
-    """Search for a product on Twin B2B and return the price."""
+def twin_get_price(driver, product_name):
     try:
         driver.get(f"https://www.twinb2b.com/search?q={product_name.replace(' ', '+')}")
         time.sleep(3)
-
-        price_selectors = [
-            "[class*='price' i]",
-            "[class*='Price']",
-            ".product-price",
-            "[data-price]",
-            "span[class*='cost' i]",
-        ]
-        for sel in price_selectors:
+        for sel in ["[class*='price' i]", "[class*='Price']",
+                    ".product-price", "[data-price]", "span[class*='cost' i]"]:
             try:
                 els = driver.find_elements(By.CSS_SELECTOR, sel)
                 for el in els[:3]:
@@ -266,12 +206,10 @@ def twin_search_price(driver, product_name):
                         return price
             except Exception:
                 continue
-
-        log.warning(f"Twin B2B: no price found for '{product_name}'")
+        log.warning(f"Twin B2B: no price for '{product_name}'")
         return None
-
     except Exception as e:
-        log.error(f"Twin B2B error for '{product_name}': {e}")
+        log.error(f"Twin B2B search error '{product_name}': {e}")
         return None
 
 
@@ -281,10 +219,34 @@ def scrape_twin(products):
     try:
         twin_login(driver)
         for name in products:
-            results[name] = twin_search_price(driver, name)
+            results[name] = twin_get_price(driver, name)
             time.sleep(1.5)
     except Exception as e:
         log.error(f"Twin B2B scraping failed: {e}")
     finally:
         driver.quit()
     return results
+
+
+# ---------------------------------------------------------------------------
+# SCRAPE BOTH for ALL products
+# ---------------------------------------------------------------------------
+
+def scrape_all(products):
+    """
+    Scrape both Provi and Twin B2B for every product.
+    Returns: {product_name: {"provi": price_or_None, "twin": price_or_None}}
+    """
+    log.info(f"Scraping Provi for {len(products)} products...")
+    provi_results = scrape_provi(products)
+
+    log.info(f"Scraping Twin B2B for {len(products)} products...")
+    twin_results = scrape_twin(products)
+
+    combined = {}
+    for name in products:
+        combined[name] = {
+            "provi": provi_results.get(name),
+            "twin":  twin_results.get(name),
+        }
+    return combined
