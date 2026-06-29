@@ -1,0 +1,48 @@
+name: Spirits Price Update
+
+on:
+  schedule:
+    # Runs at 8:00 AM CT (14:00 UTC) every Monday, Wednesday, Friday
+    - cron: "0 14 * * 1,3,5"
+  workflow_dispatch:  # Also allows manual trigger from GitHub UI
+
+jobs:
+  update-prices:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Chrome
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Install ChromeDriver
+        uses: nanasess/setup-chromedriver@v2
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run price scraper
+        env:
+          PROVI_EMAIL:    ${{ secrets.PROVI_EMAIL }}
+          PROVI_PASSWORD: ${{ secrets.PROVI_PASSWORD }}
+          TWIN_EMAIL:     ${{ secrets.TWIN_EMAIL }}
+          TWIN_PASSWORD:  ${{ secrets.TWIN_PASSWORD }}
+        run: |
+          python main.py \
+            --file "spreadsheets/claude_excel_sheet.xlsx" \
+            --output "spreadsheets/claude_excel_sheet.xlsx"
+
+      - name: Commit and push updated spreadsheet
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add spreadsheets/claude_excel_sheet.xlsx
+          git diff --staged --quiet || git commit -m "chore: update spirits prices $(date +'%Y-%m-%d')"
+          git push
